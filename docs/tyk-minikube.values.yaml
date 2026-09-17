@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Minikube overlay for the Tyk stack used by tyk-operator-demo
+# ---------------------------------------------------------------------------
+# This file does NOT stand alone. Layer it on top of the values.yaml shipped in
+# the tyk-install repository, so that repo stays the single source of truth for
+# the Tyk configuration and this file only carries the minikube deltas:
+#
+#   helm install tyk tyk-helm/tyk-stack --namespace tyk \
+#     --values ../tyk-install/kubernetes/helm-self-managed/values.yaml \
+#     --values docs/tyk-minikube.values.yaml
+#
+# Three deltas, and why:
+#
+#   1. Services -> ClusterIP. tyk-install defaults to LoadBalancer, which is
+#      correct on EKS/GKE/AKS but stays <pending> forever on minikube unless you
+#      keep `minikube tunnel` running. This demo uses kubectl port-forward
+#      instead (tyk-install README, "Option 2: Port-Forward").
+#
+#   2. Developer Portal off. The demo never touches the Portal, and turning it
+#      off removes a licence requirement and roughly 500Mi of RAM per cluster --
+#      which matters when you are running two clusters on one laptop.
+#
+#   3. Small resource requests, so both the staging and production profiles fit
+#      on a normal developer machine.
+#
+# Tyk Operator is left ON (it is on by default in tyk-install). The tyk-stack
+# chart installs the Operator, its CRDs, and -- via the bootstrap job -- the
+# tyk-operator-conf secret holding the Dashboard URL, org ID and API key. That
+# is what replaces the manual operator wiring the old tyk-k8s-demo did for you.
+# ---------------------------------------------------------------------------
+
+global:
+  components:
+    # Tyk Operator: keep enabled. Installs CRDs (apidefinitions.tyk.tyk.io,
+    # securitypolicies.tyk.tyk.io, ...) that this demo's manifests depend on.
+    operator: true
+    # Developer Portal: not used by this demo.
+    devPortal: false
+
+tyk-gateway:
+  gateway:
+    service:
+      # minikube has no cloud load balancer; reach the Gateway with
+      #   kubectl port-forward -n tyk svc/gateway-svc-tyk-tyk-gateway 8080:8080
+      type: ClusterIP
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+tyk-dashboard:
+  dashboard:
+    service:
+      # kubectl port-forward -n tyk svc/dashboard-svc-tyk-tyk-dashboard 3000:3000
+      type: ClusterIP
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+tyk-pump:
+  pump:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+tyk-bootstrap:
+  bootstrap:
+    # Must track global.components.devPortal above, otherwise the bootstrap job
+    # waits for a Portal that was never deployed.
+    devPortal: false

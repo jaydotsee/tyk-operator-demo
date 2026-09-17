@@ -6,7 +6,7 @@ A practical example demonstrating how to implement a GitOps workflow using **Tyk
 In this repo, we walk through setting up a GitOps workflow that automates the deployment of both applications and API configurations using Tyk Operator, ArgoCD, and Kustomize. By following the guide, you'll learn how to manage deployments efficiently in an organization using GitOps principles.
   
 ## Repository Structure
-The repository is organized into three main directories:
+The repository is organized into four main directories:
 
 ```
 tyk-operator-demo/
@@ -19,9 +19,13 @@ tyk-operator-demo/
 ├── policies/
 │   ├── prod/
 │   └── staging/
-└── argocd/
-    ├── prod/
-    └── staging/
+├── argocd/
+│   ├── prod/
+│   └── staging/
+└── docs/
+    ├── minikube-setup.md          # full Minikube walkthrough
+    ├── blog-update.md             # what changed vs. the blog post
+    └── tyk-minikube.values.yaml   # Helm overlay for Minikube
 ```
 
 ### 1. `apps/` Directory
@@ -43,13 +47,32 @@ Contains ArgoCD application manifests that automate the deployment process.
 - `argocd/prod/`: ArgoCD applications for the production environment.
 - `argocd/staging/`: ArgoCD applications for the staging environment.
 
+### 4. `docs/` Directory
+Setup and migration documentation.
+
+- [`docs/minikube-setup.md`](./docs/minikube-setup.md): end-to-end Minikube walkthrough built on [tyk-install](https://github.com/TykTechnologies/tyk-install).
+- [`docs/blog-update.md`](./docs/blog-update.md): how the original blog post's instructions need to be updated.
+- [`docs/tyk-minikube.values.yaml`](./docs/tyk-minikube.values.yaml): Helm values overlay applied on top of the `tyk-install` values for Minikube.
+
 ## Getting started
+
+> **Setting up from scratch?** Follow [docs/minikube-setup.md](./docs/minikube-setup.md).
+> It is a complete, current walkthrough that builds both clusters on Minikube using
+> [tyk-install](https://github.com/TykTechnologies/tyk-install).
+>
+> The [original blog post](https://tyk.io/blog/a-practical-guide-using-tyk-operator-argocd-and-kustomize/)
+> still describes the GitOps design accurately, but its environment setup relies on the
+> archived `tyk-k8s-demo` repository and no longer works. See
+> [docs/blog-update.md](./docs/blog-update.md) for what changed.
 
 ### Prerequisites
 
 - Familiarity with Kubernetes and Kustomize.
 - Basic understanding of Git.
-- Access to two Kubernetes clusters (e.g., using Minikube).
+- Two Kubernetes clusters (e.g. two Minikube profiles), each running the Tyk stack
+  with Tyk Operator, plus ArgoCD.
+- Helm 3.12+.
+- A Tyk Dashboard licence **and** a Tyk Operator licence ([free trial](https://tyk.io/sign-up/)).
 
 ### Steps
 
@@ -64,9 +87,12 @@ Contains ArgoCD application manifests that automate the deployment process.
     ```
     
 2. **Set Up the Environment**
-    
-    Follow the instructions in the [blog post](https://tyk.io/blog/a-practical-guide-using-tyk-operator-argocd-and-kustomize/) to set up your staging and production environments using Minikube, Tyk Stack, and ArgoCD.
-    
+
+    Follow [docs/minikube-setup.md](./docs/minikube-setup.md) to build the `staging` and
+    `production` Minikube clusters, install the Tyk stack (including Tyk Operator) with
+    the Helm charts from [tyk-install](https://github.com/TykTechnologies/tyk-install),
+    and install ArgoCD in each cluster.
+
 3. **Update ArgoCD Applications**
     
     Modify the `repoURL` in the ArgoCD application manifests under the `argocd/` directory to point to your forked repository.
