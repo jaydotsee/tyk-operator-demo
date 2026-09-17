@@ -26,7 +26,7 @@ tyk-operator-demo/
     ├── minikube-setup.md          # full Minikube walkthrough
     ├── blog-update.md             # what changed vs. the blog post
     ├── tyk-minikube.values.yaml   # Helm overlay for Minikube
-    └── nodeport-services.yaml     # fixed host-reachable endpoints
+    └── ingress/                    # per-cluster ingress for host access
 ```
 
 ### 1. `apps/` Directory
@@ -54,7 +54,7 @@ Setup and migration documentation.
 - [`docs/minikube-setup.md`](./docs/minikube-setup.md): end-to-end Minikube walkthrough built on [tyk-install](https://github.com/TykTechnologies/tyk-install).
 - [`docs/blog-update.md`](./docs/blog-update.md): how the original blog post's instructions need to be updated.
 - [`docs/tyk-minikube.values.yaml`](./docs/tyk-minikube.values.yaml): Helm values overlay applied on top of the `tyk-install` values for Minikube.
-- [`docs/nodeport-services.yaml`](./docs/nodeport-services.yaml): pinned NodePort Services, for exposing both clusters on the host behind your own load balancer.
+- [`docs/ingress/`](./docs/ingress): per-cluster ingress values and ArgoCD `Ingress` manifests, for exposing both clusters on the host behind your own load balancer.
 
 ## Getting started
 

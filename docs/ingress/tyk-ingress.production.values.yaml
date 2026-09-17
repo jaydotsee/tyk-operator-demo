@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# Tyk ingress for the production cluster
+# ---------------------------------------------------------------------------
+# Third and last values layer. Apply on top of the tyk-install values and the
+# shared Minikube overlay:
+#
+#   helm install tyk tyk-helm/tyk-stack --namespace tyk \
+#     --values values.yaml \
+#     --values ../../../tyk-operator-demo/docs/tyk-minikube.values.yaml \
+#     --values ../../../tyk-operator-demo/docs/ingress/tyk-ingress.production.values.yaml
+#
+# These are the chart's own ingress blocks -- tyk-install ships them already,
+# switched off, with commented cloud examples. Nothing here is a workaround;
+# it is the documented "NGINX Ingress" path from the tyk-install README with
+# the hostnames filled in.
+#
+# The shared overlay already sets both services to ClusterIP, which is what the
+# tyk-install README asks for before enabling ingress.
+# ---------------------------------------------------------------------------
+
+tyk-gateway:
+  gateway:
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        # API traffic is not a web form: do not let nginx's 1m default body
+        # limit truncate requests passing through the Gateway.
+        nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      hosts:
+        - host: gw.prod.test
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+
+tyk-dashboard:
+  dashboard:
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: "32m"
+      hosts:
+        - host: dash.prod.test
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []

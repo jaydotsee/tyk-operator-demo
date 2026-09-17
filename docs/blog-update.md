@@ -92,17 +92,19 @@ one of:
   "Option 2: Port-Forward" in the tyk-install README. This repo ships that overlay as
   [`docs/tyk-minikube.values.yaml`](./tyk-minikube.values.yaml).
 - for readers who want stable host endpoints — to put their own load balancer in front,
-  say — publish fixed NodePorts instead, with
-  [`docs/nodeport-services.yaml`](./nodeport-services.yaml) plus
-  `minikube start --ports`. Worth a short subsection: `port-forward` binds loopback
-  only and dies with the pod, so it is a poor load-balancer backend.
+  say — install ingress-nginx per cluster and turn on the charts' own `ingress:` blocks
+  (this repo ships the values and ArgoCD manifests in [`docs/ingress/`](./ingress)),
+  published with `minikube start --ports`. Worth a short subsection: `port-forward`
+  binds loopback only and dies with the pod, so it is a poor load-balancer backend.
 - tell readers to run `minikube tunnel` per profile — but see item 7 below, this breaks
   the staging IP allowlist, and two concurrent tunnels fight over host routes because
   both profiles default to the same service CIDR.
 
-A detail worth stating outright, because it looks like a values change and is not: the
-tyk-charts service templates render no `nodePort` field, so a fixed NodePort cannot be
-set through Helm values at all. It needs a separate Service alongside the chart's own.
+A detail worth stating outright, because it cuts the other way from what you would
+guess: ingress *is* expressible in the charts' values (tyk-install ships the blocks,
+switched off), whereas a pinned NodePort is not — the service templates render no
+`nodePort` field, so `type: NodePort` only ever gets you a random high port. Ingress is
+the supported route, not the elaborate one.
 
 ## 3. The second cluster
 
@@ -125,12 +127,14 @@ Only needed because `tyk-k8s-demo` exposed Tyk over ingress. With port-forwardin
 dead weight, and it actively breaks the staging demo (item 7). Remove it from the main
 flow.
 
-If the post wants to keep an answer for "how do I put my own load balancer in front?",
-published NodePorts are the better one: `minikube start --ports=8080:30080` maps a host
-port onto a fixed NodePort with no tunnel process, and the two profiles are told apart
-by their host-side mapping rather than by a port offset. The `--ports` flag is
-docker/podman only and applies only at profile creation, which is worth saying in the
-same breath.
+If the post wants an answer for "how do I put my own load balancer in front?", it is
+worth noting that the addon is not the only option and arguably not the best one:
+installing ingress-nginx by Helm lets you pin the controller's NodePorts and set
+`use-forwarded-headers` at install time, and is the same command you would run on a
+real cluster. Either way `minikube start --ports=8080:30080` publishes it, with no
+tunnel process, and the two profiles are told apart by their host-side mapping rather
+than by a port offset. The `--ports` flag is docker/podman only and applies only at
+profile creation, which is worth saying in the same breath.
 
 ## 5. ArgoCD install
 
