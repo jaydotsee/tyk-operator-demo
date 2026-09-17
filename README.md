@@ -75,7 +75,8 @@ Setup and migration documentation.
   with Tyk Operator, plus ArgoCD.
 - Helm 3.12+.
 - A Tyk Dashboard licence **and** a Tyk Operator licence ([free trial](https://tyk.io/sign-up/)).
-- On Apple Silicon or any other arm64 host, the demo's `httpbin` image needs a one-time swap — [see the guide](./docs/minikube-setup.md#if-you-are-on-arm64-swap-the-httpbin-image).
+
+Runs on `amd64` and `arm64` (including Apple Silicon) without modification.
 
 ### Steps
 

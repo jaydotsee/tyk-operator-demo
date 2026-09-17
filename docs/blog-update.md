@@ -45,16 +45,12 @@ The post lists Kubernetes/Kustomize familiarity, Git basics, and two clusters. A
   licence check. This is the single most likely thing to derail a reader.
 - **Resource guidance.** Two full stacks plus two ArgoCD installs need roughly 8 CPUs and
   14 GB across both profiles. Offer running them sequentially as a fallback.
-- **An arm64 caveat, stated up front rather than in troubleshooting.**
-  `apps/httpbin/base/deployment.yaml` uses `kennethreitz/httpbin:latest` — last
-  published in 2018, `linux/amd64` only — so on Apple Silicon the pod never starts.
-  Since a large share of readers are now on Apple Silicon, and since the fix is a Git
-  change that ArgoCD deploys (so making it late means an extra push and resync), the
-  post should put the swap to `mccutchen/go-httpbin` in the fork-and-clone step where
-  the reader is already editing and committing, not in a footnote. Worth noting the
-  Service needs a `targetPort: 8080` because go-httpbin runs non-root and cannot bind
-  80, and that go-httpbin's tags dropped their `v` prefix partway through the project's
-  history, so `v2.25.0` does not exist while `2.25.0` does.
+- **No arm64 caveat any more — but say why.** The post's original manifests used
+  `kennethreitz/httpbin:latest`, last published in 2018 and `linux/amd64` only, so the
+  pod never started on Apple Silicon. This repository now ships
+  `mccutchen/go-httpbin`, which is multi-arch, so the revised post needs no swap step.
+  It is worth one sentence noting the change, because readers with older forks will
+  still hit `exec format error` and should know what to look for.
 
 ## 2. Installing the Tyk stack — the main rewrite
 
@@ -230,7 +226,8 @@ The post has none, and the Helm path surfaces failures the script used to swallo
 cases readers actually hit are collected in
 [`minikube-setup.md` → Troubleshooting](./minikube-setup.md#troubleshooting): missing
 Operator licence, cert-manager not ready, missing CRDs, `<pending>` LoadBalancer IPs,
-403 from the IP allowlist, arm64 httpbin, and dropped port-forwards.
+403 from the IP allowlist, a Dashboard advertising the wrong Gateway hostname, arm64
+httpbin on older forks, and dropped port-forwards.
 
 ---
 
@@ -238,7 +235,9 @@ Operator licence, cert-manager not ready, missing CRDs, `<pending>` LoadBalancer
 
 Useful to state, so the revision does not look larger than it is:
 
-- The repository layout (`apps/`, `policies/`, `argocd/`) and every manifest in it.
+- The repository layout (`apps/`, `policies/`, `argocd/`). Every manifest in it is
+  unchanged bar the `httpbin` base, which moved to a multi-arch image (see item 1);
+  the Service still answers on port 80, so no `ApiDefinition` or overlay changed.
 - The app-of-apps pattern and both root applications.
 - The Kustomize base/overlay split, and the namespace asymmetry it produces:
   staging lands in `httpbin-staging` / `policies-staging` (the staging
