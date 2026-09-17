@@ -45,9 +45,16 @@ The post lists Kubernetes/Kustomize familiarity, Git basics, and two clusters. A
   licence check. This is the single most likely thing to derail a reader.
 - **Resource guidance.** Two full stacks plus two ArgoCD installs need roughly 8 CPUs and
   14 GB across both profiles. Offer running them sequentially as a fallback.
-- **An arm64 caveat.** `apps/httpbin/base/deployment.yaml` uses
-  `kennethreitz/httpbin:latest`, which is `linux/amd64` only and crashes with
-  `exec format error` on Apple Silicon.
+- **An arm64 caveat, stated up front rather than in troubleshooting.**
+  `apps/httpbin/base/deployment.yaml` uses `kennethreitz/httpbin:latest` — last
+  published in 2018, `linux/amd64` only — so on Apple Silicon the pod never starts.
+  Since a large share of readers are now on Apple Silicon, and since the fix is a Git
+  change that ArgoCD deploys (so making it late means an extra push and resync), the
+  post should put the swap to `mccutchen/go-httpbin` in the fork-and-clone step where
+  the reader is already editing and committing, not in a footnote. Worth noting the
+  Service needs a `targetPort: 8080` because go-httpbin runs non-root and cannot bind
+  80, and that go-httpbin's tags dropped their `v` prefix partway through the project's
+  history, so `v2.25.0` does not exist while `2.25.0` does.
 
 ## 2. Installing the Tyk stack — the main rewrite
 

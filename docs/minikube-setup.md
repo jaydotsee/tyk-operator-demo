@@ -69,12 +69,23 @@ Get a free trial at <https://tyk.io/sign-up/>. You need:
 - **Dashboard licence** → `TYK_LICENSE_KEY`
 - **Tyk Operator licence** → `TYK_OPERATOR_LICENSE`
 
-### Apple Silicon / arm64
+### Apple Silicon and other arm64 machines
 
-The demo deploys `kennethreitz/httpbin:latest`, which is published for `linux/amd64`
-only. On an arm64 machine the pod will crash with `exec format error`. See
-[Troubleshooting → httpbin pod crashes on Apple Silicon](#httpbin-pod-crashes-on-apple-silicon)
-for a two-line fix.
+Check which you are on:
+
+```bash
+uname -m      # arm64 or aarch64 -> read on;  x86_64 -> skip this
+```
+
+The demo's upstream service is `kennethreitz/httpbin:latest`, which was last published
+in **2018** and only ever for `linux/amd64`. There is no arm64 image to pull, so on an
+Apple Silicon Mac — or any arm64 host — the pod does not start.
+
+This is not optional on those machines and it is not a troubleshooting footnote: the
+swap is a Git change, and ArgoCD deploys from Git, so make it **before** Step 5 or you
+will be pushing a fix and waiting for a resync. It is folded into Step 1 so it rides
+the same commit — see
+[If you are on arm64, swap the httpbin image](#if-you-are-on-arm64-swap-the-httpbin-image).
 
 ---
 
@@ -136,10 +147,89 @@ find argocd -name '*.bak' -delete
 grep -rn repoURL argocd/
 ```
 
-Commit and push — ArgoCD reads Git, not your working copy:
+### If you are on arm64, swap the httpbin image
+
+Skip this on `x86_64`. On Apple Silicon or any other arm64 host, do it now so it goes
+out in the same commit as the `repoURL` change above.
+
+`kennethreitz/httpbin:latest` has no arm64 image, so the pod will not run.
+[`mccutchen/go-httpbin`](https://github.com/mccutchen/go-httpbin) is the maintained
+drop-in: same endpoints, published for `linux/amd64` and `linux/arm64`. It listens on
+**8080** rather than 80, so the Service needs a `targetPort` — but its `port` stays 80,
+which is what keeps the `ApiDefinition` unchanged.
+
+In `apps/httpbin/base/deployment.yaml`:
+
+```yaml
+      containers:
+      - name: httpbin
+        image: mccutchen/go-httpbin:2.25.0     # was kennethreitz/httpbin:latest
+        ports:
+        - containerPort: 8080                  # was 80
+          name: http
+          protocol: TCP
+```
+
+In `apps/httpbin/base/service.yaml`:
+
+```yaml
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080                         # new: the Service still answers on 80
+```
+
+Or apply both non-interactively. This form works with both BSD `sed` (macOS) and GNU
+`sed` — `-i.bak` with the suffix attached is the spelling both accept, and the Service
+is rewritten wholesale rather than patched, because inserting a line with `sed` is
+*not* portable (BSD `sed` writes a literal `n` where GNU writes a newline):
 
 ```bash
-git add argocd/
+sed -i.bak -e 's#image: kennethreitz/httpbin:latest#image: mccutchen/go-httpbin:2.25.0#' \
+           -e 's#- containerPort: 80$#- containerPort: 8080#' \
+  apps/httpbin/base/deployment.yaml
+
+cat > apps/httpbin/base/service.yaml <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: httpbin
+  namespace: httpbin
+  labels:
+    app: httpbin
+spec:
+  selector:
+    app: httpbin
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+EOF
+
+find apps -name '*.bak' -delete
+
+# Check it reads as intended before committing
+git diff apps/httpbin/base/
+```
+
+Three things worth knowing:
+
+- **Nothing else changes.** The `ApiDefinition` targets
+  `http://httpbin.httpbin-staging.svc` on port 80, and the Service still answers there.
+  Both overlays inherit the base, so staging and production are both fixed by this.
+- **The tag has no `v` prefix.** go-httpbin used `v2.15.0`-style tags historically and
+  dropped the prefix later, so `v2.25.0` does not exist and pulls will fail. `2.25.0`
+  is current at the time of writing; check
+  [the tag list](https://hub.docker.com/r/mccutchen/go-httpbin/tags) for newer.
+- **It is worth doing on amd64 too**, if you care — you are otherwise running an
+  unmaintained 2018 image. It is only *mandatory* on arm64.
+
+### Commit and push
+
+ArgoCD reads Git, not your working copy:
+
+```bash
+git add argocd/ apps/
 git commit -m "Point ArgoCD applications at my fork"
 git push origin main
 ```
@@ -984,28 +1074,26 @@ Fix: widen `allowed_ips` in `apps/httpbin/overlays/staging/api_auth.yaml`, or se
 and how `X-Forwarded-For` interacts with it, is in
 [The staging IP allowlist will now reject you](#the-staging-ip-allowlist-will-now-reject-you).
 
-### httpbin pod crashes on Apple Silicon
+### httpbin pod will not start on Apple Silicon / arm64
 
-`kennethreitz/httpbin:latest` is `linux/amd64` only. Swap in the arm64-capable
-`go-httpbin` by editing `apps/httpbin/base/deployment.yaml`:
+Symptom is a pod stuck in `CrashLoopBackOff` or `Error`, with `exec format error` in
+its logs — occasionally instead a very slow pod, if your Docker setup happens to
+provide binfmt emulation:
 
-```yaml
-        image: mccutchen/go-httpbin:v2.15.0
-        ports:
-        - containerPort: 8080
+```bash
+kubectl -n httpbin-staging get pods
+kubectl -n httpbin-staging logs -l app=httpbin --tail=20
 ```
 
-and pointing the Service at the new port in `apps/httpbin/base/service.yaml`:
+`kennethreitz/httpbin:latest` is `linux/amd64` only. Apply the image swap in
+[If you are on arm64, swap the httpbin image](#if-you-are-on-arm64-swap-the-httpbin-image),
+then commit and push — ArgoCD deploys from Git, so an edit to your working copy alone
+changes nothing. Force the resync rather than waiting for the poll:
 
-```yaml
-  ports:
-    - protocol: TCP
-      port: 80
-      targetPort: 8080
+```bash
+kubectl -n argocd patch application httpbin-staging \
+  --type merge -p '{"operation":{"sync":{"revision":"HEAD"}}}'
 ```
-
-Commit, push, and let ArgoCD sync. The `ApiDefinition` needs no change — it targets
-the Service on port 80.
 
 ### Bootstrap job fails waiting for the Developer Portal
 
