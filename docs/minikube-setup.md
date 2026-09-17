@@ -579,7 +579,8 @@ macOS.)
 | Tyk Dashboard | `dash.staging.test` | `dash.prod.test` |
 | ArgoCD | `argocd.staging.test` | `argocd.prod.test` |
 
-Point them at loopback:
+Point them at whatever address your load balancer listens on. If it runs on this
+machine, that is loopback:
 
 ```bash
 sudo tee -a /etc/hosts <<'EOF'
@@ -588,9 +589,71 @@ sudo tee -a /etc/hosts <<'EOF'
 EOF
 ```
 
+If the load balancer is on another host, put **its** address here instead, and start
+the Minikube profiles with `--listen-address=0.0.0.0` so it can reach them — see
+[Before you bind to 0.0.0.0](#before-you-bind-to-0000). The names must resolve for
+whoever is *originating* the request; the load balancer itself talks to the clusters by
+IP and port, and never resolves them.
+
 > Prefer not to touch `/etc/hosts`? Swap every `*.test` name for the equivalent
 > `*.127.0.0.1.nip.io` — those resolve to loopback without local configuration, at the
 > cost of a DNS lookup that fails offline.
+
+### How a request finds the right component
+
+Nothing in this chain routes on IP or port past the first hop. Everything after the
+load balancer is decided by the `Host` header, which is why it has to survive intact.
+
+```
+  http://dash.staging.test/
+      │
+      │  1. DNS / /etc/hosts:  dash.staging.test -> 127.0.0.1
+      ▼
+  your load balancer, :80
+      │  2. routes on Host: *.staging.test -> 127.0.0.1:8080
+      │     AND passes Host through unchanged
+      ▼
+  staging ingress-nginx  (node :30080, published to host :8080)
+      │  3. matches Host against its Ingress rules
+      │       gw.staging.test     -> gateway-svc-tyk-tyk-gateway:8080
+      │       dash.staging.test   -> dashboard-svc-tyk-tyk-dashboard:3000
+      │       argocd.staging.test -> argocd-server:80
+      ▼
+  Tyk Dashboard
+         4. serves it, because dashboard.hostName says this is its own name
+```
+
+**Every component's name has to be spelled the same in each place it appears** — and
+for the Dashboard that is three places, not one. All of these live in
+[`docs/ingress/`](./ingress), and each must also match your load balancer's routing
+rule and `/etc/hosts`:
+
+| | staging | production | Set in |
+| --- | --- | --- | --- |
+| Gateway ingress rule | `gw.staging.test` | `gw.prod.test` | `tyk-gateway.gateway.ingress.hosts[].host` |
+| Gateway URL shown in the Dashboard UI | `gw.staging.test` | `gw.prod.test` | `tyk-dashboard.dashboard.hostConfig.overrideHostname` |
+| Dashboard ingress rule | `dash.staging.test` | `dash.prod.test` | `tyk-dashboard.dashboard.ingress.hosts[].host` |
+| Dashboard's own hostname | `dash.staging.test` | `dash.prod.test` | `tyk-dashboard.dashboard.hostName` |
+| ArgoCD ingress rule | `argocd.staging.test` | `argocd.prod.test` | `docs/ingress/argocd-ingress.<env>.yaml` |
+
+The two Dashboard settings are easy to miss, because `tyk-install` ships values for a
+different topology and they are not obviously part of "ingress config":
+
+- **`dashboard.hostName`** (`TYK_DB_HOSTCONFIG_HOSTNAME`) defaults to
+  `tyk-dashboard.local`, and `tyk-install` also sets `hostConfig.enableHostNames: true`
+  — so the Dashboard is doing hostname-based routing against a name you are not using.
+  It has to be the name you actually reach it on.
+- **`hostConfig.overrideHostname`** (`TYK_DB_HOSTCONFIG_GATEWAYHOSTNAME`) defaults to
+  `tyk-gw.local`. This is the Gateway URL the Dashboard prints next to each API. Leave
+  it and the UI will tell you your API is at `http://tyk-gw.local/httpbin`, which
+  resolves to nothing.
+
+The values files in this repo already set all of these consistently. If you rename a
+host, change it in the values file, `/etc/hosts`, and your load balancer's rules
+together.
+
+> `tyk-gateway.gateway.hostName` looks like it belongs in this list. It does not — no
+> template in the chart reads it, so its value has no effect.
 
 ### Host port map
 
@@ -837,8 +900,20 @@ server {
 ```
 
 Passing `Host` through unchanged is what lets the in-cluster ingress route; drop it and
-every request lands on the default backend as a 404. For health checks, the Gateway
-serves `/hello`.
+every request lands on nginx's default backend as a 404. HAProxy preserves the original
+`Host` by default, which is why the fragment above does not mention it; nginx does
+**not** — `proxy_pass` rewrites `Host` to the upstream name unless you set
+`proxy_set_header Host $host`, so that line is load-bearing.
+
+For health checks, the Gateway serves `/hello` — but note it only answers under a
+matching `Host`, so a check must send one:
+
+```haproxy
+backend staging
+    option httpchk
+    http-check send meth GET uri /hello hdr Host gw.staging.test
+    server s1 127.0.0.1:8080 check
+```
 
 ### Before you bind to 0.0.0.0
 
@@ -970,6 +1045,25 @@ minikube ssh -p staging -- curl -s -H 'Host: gw.staging.test' localhost:30080/he
 
 If step 3 works but the host cannot connect, check `--listen-address`: bound to
 `127.0.0.1`, the ports are unreachable from other machines by design.
+
+### Dashboard reachable, but the API URLs it shows are wrong
+
+The UI prints something like `http://tyk-gw.local/httpbin` that resolves to nothing.
+That is `hostConfig.overrideHostname` still carrying the `tyk-install` default. It is a
+display value fed by `TYK_DB_HOSTCONFIG_GATEWAYHOSTNAME`, so nothing is broken in the
+data path — but it means the values layer was not applied. Check what the pod actually
+got:
+
+```bash
+kubectl -n tyk get deployment dashboard-tyk-tyk-dashboard \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="TYK_DB_HOSTCONFIG_GATEWAYHOSTNAME")].value}{"\n"}'
+kubectl -n tyk get deployment dashboard-tyk-tyk-dashboard \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="TYK_DB_HOSTCONFIG_HOSTNAME")].value}{"\n"}'
+```
+
+Both should be your ingress hostnames (`gw.<env>.test` and `dash.<env>.test`). If they
+are the `.local` defaults, the third `--values` layer was missing from `helm install` —
+re-run it as `helm upgrade` with all three files.
 
 ### ArgoCD redirect loop behind the ingress
 
