@@ -80,8 +80,8 @@ for a two-line fix.
 
 ## Port map
 
-Everything is reached through `kubectl port-forward`, so each cluster needs its own
-set of local ports. This is what replaces the old `--port-offset 1` flag.
+Each cluster gets its own set of host ports. This is what replaces the old
+`--port-offset 1` flag.
 
 | Service | staging | production |
 | --- | --- | --- |
@@ -89,8 +89,26 @@ set of local ports. This is what replaces the old `--port-offset 1` flag.
 | Tyk Gateway | `http://localhost:8080` | `http://localhost:8081` |
 | ArgoCD UI | `https://localhost:8000` | `https://localhost:8001` |
 
-Each `port-forward` runs in the foreground until you stop it. Either open a terminal
-per forward, or append `&` and keep a note of the job numbers.
+There are two ways to make those ports real, and the choice matters if you intend to
+put your own load balancer in front:
+
+- **Mode A — `kubectl port-forward`.** Nothing to install, but each forward is a
+  foreground process that binds `127.0.0.1` only and dies when the pod restarts.
+  Fine for working through this guide; a poor backend for a load balancer.
+- **Mode B — published NodePorts.** Fixed addresses served by the Minikube node
+  container itself. No tunnel process, survives pod restarts, and can be bound to an
+  address other than loopback. This is the one to pick if you want your own load
+  balancer in front. See
+  [Exposing both clusters to the host](#exposing-both-clusters-to-the-host).
+
+The guide below uses Mode A because it needs no decisions up front. Mode B changes
+only *how* the same host ports are served, so every URL in this guide stays valid
+either way.
+
+> **If you already know you want Mode B, read that section before Step 3.** The
+> `minikube start --ports` mapping it relies on is applied only when the profile's
+> container is first created, so switching later means deleting and recreating the
+> profile.
 
 ---
 
@@ -166,6 +184,10 @@ minikube start -p staging --cpus=4 --memory=6144
 kubectl config use-context staging
 kubectl get nodes
 ```
+
+> Planning to front this with your own load balancer? Use the `minikube start` line
+> from [B1](#b1-start-each-profile-with-the-port-mapping) instead — the port mapping it
+> adds can only be set when the profile's container is first created.
 
 The minikube profile name becomes the kubectl context name, so `staging` and
 `production` are the context names the rest of this guide (and the blog) uses.
@@ -294,6 +316,11 @@ kubectl port-forward -n tyk svc/gateway-svc-tyk-tyk-gateway     8080:8080 &
 curl http://localhost:8080/hello
 ```
 
+> Using published NodePorts instead? Skip this — apply
+> [`docs/nodeport-services.yaml`](./nodeport-services.yaml) once per cluster and the
+> same URLs work without a forward. See
+> [B2](#b2-apply-the-nodeport-services).
+
 Log in to <http://localhost:3000> with `default@example.com` / `topsecret123`.
 
 ### 3.6 Install ArgoCD
@@ -335,6 +362,9 @@ kubectl port-forward -n tyk svc/dashboard-svc-tyk-tyk-dashboard 3001:3000 &
 kubectl port-forward -n tyk svc/gateway-svc-tyk-tyk-gateway     8081:8080 &
 kubectl port-forward svc/argocd-server -n argocd                8001:443  &
 ```
+
+> On the NodePort path these forwards are unnecessary: the production profile's
+> `--ports` mapping already puts the same services on 3001, 8081 and 8001.
 
 > Note the mapping: the local port changes, the in-cluster port does not. The
 > Dashboard still listens on 3000 and the Gateway on 8080 inside every cluster.
@@ -501,6 +531,230 @@ curl -i -H "Origin: https://example.com" -H "Authorization: Bearer $PROD_API_KEY
 
 ---
 
+## Exposing both clusters to the host
+
+Everything above reaches the clusters through `kubectl port-forward`. That is fine for
+following the guide, but it is a bad foundation for your own load balancer: each
+forward binds `127.0.0.1` only, is a foreground process you have to keep alive, and
+drops as soon as the pod behind it restarts.
+
+This section replaces those forwards with published NodePorts — fixed addresses served
+by the Minikube node container, with no tunnel process in the middle.
+
+### Why not just set `service.type: NodePort` in the Helm values?
+
+Because you cannot pin the port that way. The tyk-charts service templates render only
+`type`, `port`, `targetPort`, `protocol` and `name` — there is no `nodePort` field. Ask
+for NodePort and Kubernetes assigns a random port in 30000-32767, which is useless when
+the host-side mapping has to know the number in advance.
+
+So this repo ships [`docs/nodeport-services.yaml`](./nodeport-services.yaml): three
+extra Services with pinned NodePorts that select the same pods as the chart's own
+Services. The chart-managed Services are left alone, so `helm upgrade` cannot clobber
+these.
+
+| Service | NodePort (both clusters) | Host port, staging | Host port, production |
+| --- | --- | --- | --- |
+| Tyk Gateway | `30080` | `8080` | `8081` |
+| Tyk Dashboard | `30300` | `3000` | `3001` |
+| ArgoCD server | `30443` | `8000` | `8001` |
+
+The NodePort numbers are the same in both clusters — they are separate clusters, so
+there is no collision. The clusters are told apart on the host by the mapping below.
+
+### B1. Start each profile with the port mapping
+
+This **replaces** the `minikube start` commands in Steps 3.1 and 4.
+
+```bash
+minikube start -p staging --cpus=4 --memory=6144 \
+  --listen-address=127.0.0.1 \
+  --ports=8080:30080 --ports=3000:30300 --ports=8000:30443
+
+minikube start -p production --cpus=4 --memory=6144 \
+  --listen-address=127.0.0.1 \
+  --ports=8081:30080 --ports=3001:30300 --ports=8001:30443
+```
+
+Three things to know about `--ports`:
+
+- **Docker and Podman drivers only.** Other drivers have no node container to publish
+  ports from.
+- **It applies only when the profile's container is first created.** Re-running
+  `minikube start` with different `--ports` on an existing profile silently ignores
+  them. To change the mapping: `minikube delete -p staging` and start again.
+- **`--listen-address` chooses the bind address.** `127.0.0.1` keeps the ports on the
+  loopback interface, which is right when your load balancer runs on the same machine.
+  Use `--listen-address=0.0.0.0` to reach them from other machines on your network —
+  and read [Before you bind to 0.0.0.0](#before-you-bind-to-0000) first.
+
+### B2. Apply the NodePort Services
+
+Do this **after** the Tyk stack (Step 3.4) and ArgoCD (Step 3.6) are installed, in each
+cluster:
+
+```bash
+kubectl config use-context staging
+kubectl apply -f docs/nodeport-services.yaml
+
+kubectl config use-context production
+kubectl apply -f docs/nodeport-services.yaml
+```
+
+Skip the `kubectl port-forward` commands in Steps 3.5, 3.6 and 4 entirely — these
+Services do that job now.
+
+### B3. Verify
+
+```bash
+# The node container is publishing the ports
+docker port staging
+docker port production
+
+# The Services picked up endpoints (an empty ENDPOINTS column means the selector
+# matched no pods -- check the release name is `tyk`)
+kubectl get svc,endpoints -n tyk      -l app.kubernetes.io/part-of=tyk-operator-demo
+kubectl get svc,endpoints -n argocd   -l app.kubernetes.io/part-of=tyk-operator-demo
+
+# End to end
+curl http://localhost:8080/hello      # staging gateway
+curl http://localhost:8081/hello      # production gateway
+curl -k https://localhost:8000        # staging ArgoCD
+```
+
+### The staging IP allowlist will now reject you
+
+This is the one thing that genuinely breaks when you move off `port-forward`, and it is
+easy to misdiagnose as a broken deployment.
+
+`apps/httpbin/overlays/staging/api_auth.yaml` sets:
+
+```yaml
+  enable_ip_whitelisting: true
+  allowed_ips:
+    - 127.0.0.1
+```
+
+`kubectl port-forward` satisfies that by accident — the connection reaches the Gateway
+from inside its own network namespace, so the source really is `127.0.0.1`. Through a
+NodePort it is not: the Gateway sees the address traffic arrived from on the Minikube
+node's network, typically the Docker bridge gateway. Every request gets rejected.
+
+Find the CIDR Minikube gave the profile (the Docker network is named after the profile):
+
+```bash
+docker network inspect staging --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+# e.g. 192.168.49.0/24   -- if the name does not resolve, find it with `docker network ls`
+```
+
+Then widen the allowlist in `apps/httpbin/overlays/staging/api_auth.yaml` — `allowed_ips`
+accepts CIDR notation:
+
+```yaml
+  allowed_ips:
+    - 127.0.0.1
+    - 192.168.49.0/24    # substitute your own subnet
+```
+
+Commit and push; ArgoCD and the Operator will roll it out. To take the allowlist out of
+the picture entirely while you are wiring up a load balancer, set
+`enable_ip_whitelisting: false` instead.
+
+**With a load balancer in front**, the Gateway sees *your load balancer's* address, not
+the original client's — unless the load balancer sets `X-Forwarded-For`. The
+`tyk-install` values set `httpsServerOptions.xffDepth: 1`, so Tyk will honour XFF when
+it is present. Configure your load balancer to send it (`option forwardfor` in HAProxy,
+`proxy_set_header X-Forwarded-For` in nginx) and allowlist the real client addresses;
+otherwise allowlist the load balancer itself.
+
+### Optional: plain HTTP from ArgoCD
+
+`argocd-server` serves TLS on its container port, so the NodePort is HTTPS with a
+self-signed certificate. If your load balancer terminates TLS and wants to talk plain
+HTTP to the backend, switch ArgoCD to insecure mode:
+
+```bash
+kubectl -n argocd patch configmap argocd-cmd-params-cm \
+  --type merge -p '{"data":{"server.insecure":"true"}}'
+kubectl -n argocd rollout restart deployment argocd-server
+```
+
+Do this in each cluster you want it in. Only do it when something in front is
+terminating TLS — it disables it, it does not move it.
+
+### Example: one load balancer in front of both clusters
+
+With the mapping above, both clusters are ordinary TCP backends on the host. An HAProxy
+fragment routing by hostname:
+
+```haproxy
+frontend tyk_gateways
+    bind *:80
+    option forwardfor                       # Tyk reads X-Forwarded-For (xffDepth: 1)
+    acl is_staging hdr(host) -i gw.staging.example.com
+    acl is_prod    hdr(host) -i gw.example.com
+    use_backend gw_staging if is_staging
+    use_backend gw_prod    if is_prod
+    default_backend gw_staging
+
+backend gw_staging
+    option httpchk GET /hello
+    server staging 127.0.0.1:8080 check
+
+backend gw_prod
+    option httpchk GET /hello
+    server production 127.0.0.1:8081 check
+```
+
+The equivalent in nginx:
+
+```nginx
+upstream tyk_staging { server 127.0.0.1:8080; }
+upstream tyk_prod    { server 127.0.0.1:8081; }
+
+server {
+    listen 80;
+    server_name gw.staging.example.com;
+    location / {
+        proxy_pass http://tyk_staging;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+    }
+}
+
+server {
+    listen 80;
+    server_name gw.example.com;
+    location / {
+        proxy_pass http://tyk_prod;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+`/hello` is the Gateway's health endpoint and is the right target for a health check.
+
+### Before you bind to 0.0.0.0
+
+`--listen-address=0.0.0.0` puts the Tyk Dashboard and the ArgoCD UI on your network.
+Both are administrative interfaces, and this demo ships them with a known default
+password (`default@example.com` / `topsecret123`) over plain HTTP. On a trusted local
+network for a demo that is a reasonable trade; on anything shared it is not. Keep
+`--listen-address=127.0.0.1` and let a load balancer on the same machine be the only
+thing exposed, or at minimum change `ADMIN_PASSWORD` in `.env` before the clusters are
+built.
+
+### Why not `minikube tunnel`?
+
+It looks like the natural fit, since it keeps the stock `tyk-install` values with
+`service.type: LoadBalancer`. Two problems with two clusters: both profiles default to
+the same service CIDR, so two concurrent tunnels fight over host routes; and the tunnel
+is another long-lived foreground process, which is what this section exists to get rid
+of. NodePorts published at profile creation have neither problem.
+
+---
+
 ## Troubleshooting
 
 ### Operator pod is not ready
@@ -540,10 +794,14 @@ separate terminal.
 
 The staging overlay sets `enable_ip_whitelisting: true` with `allowed_ips: [127.0.0.1]`.
 `kubectl port-forward` satisfies this because the connection reaches the Gateway from
-inside its own network namespace, so it appears to come from `127.0.0.1`. If you switch
-to minikube ingress or `minikube tunnel`, the source IP becomes the ingress
-controller's pod IP and every request is rejected. Either stay on `port-forward` or
-relax `allowed_ips` in `apps/httpbin/overlays/staging/api_auth.yaml`.
+inside its own network namespace, so it appears to come from `127.0.0.1`. Every other
+access path — published NodePorts, minikube ingress, `minikube tunnel`, or your own load
+balancer — presents a different source IP, and every request is rejected.
+
+Fix: widen `allowed_ips` in `apps/httpbin/overlays/staging/api_auth.yaml`, or set
+`enable_ip_whitelisting: false`. Full walkthrough, including how to find the right CIDR
+and how `X-Forwarded-For` interacts with it, is in
+[The staging IP allowlist will now reject you](#the-staging-ip-allowlist-will-now-reject-you).
 
 ### httpbin pod crashes on Apple Silicon
 
@@ -574,6 +832,29 @@ the Service on port 80.
 are set to `false` in the overlay; if you re-enable the Portal, set both to `true`, add
 a `TYK_PORTAL_LICENSE`, and create the `secrets-tyk-tyk-dev-portal` secret described in
 the tyk-install README.
+
+### Published ports are not reachable
+
+Work outwards from the cluster:
+
+```bash
+# 1. Is the node container publishing them? Empty or missing lines mean the profile
+#    was created without --ports (it is ignored on an existing container -- you have to
+#    `minikube delete -p <profile>` and start again).
+docker port staging
+
+# 2. Do the NodePort Services have endpoints? An empty ENDPOINTS column means the
+#    selector matched no pods -- most often because the Helm release is not named `tyk`,
+#    which changes the pod labels the manifest selects on.
+kubectl get svc,endpoints -n tyk -l app.kubernetes.io/part-of=tyk-operator-demo
+
+# 3. Does it work from inside the node, bypassing the host mapping?
+minikube ssh -p staging -- curl -s localhost:30080/hello
+```
+
+If step 3 works but step 1's mapping is present and the host still cannot connect,
+check `--listen-address`: bound to `127.0.0.1`, the ports are unreachable from other
+machines by design.
 
 ### Port-forward drops
 

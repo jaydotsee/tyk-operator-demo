@@ -91,8 +91,18 @@ one of:
   the Developer Portal off, then use `kubectl port-forward` — this is
   "Option 2: Port-Forward" in the tyk-install README. This repo ships that overlay as
   [`docs/tyk-minikube.values.yaml`](./tyk-minikube.values.yaml).
+- for readers who want stable host endpoints — to put their own load balancer in front,
+  say — publish fixed NodePorts instead, with
+  [`docs/nodeport-services.yaml`](./nodeport-services.yaml) plus
+  `minikube start --ports`. Worth a short subsection: `port-forward` binds loopback
+  only and dies with the pod, so it is a poor load-balancer backend.
 - tell readers to run `minikube tunnel` per profile — but see item 7 below, this breaks
-  the staging IP allowlist.
+  the staging IP allowlist, and two concurrent tunnels fight over host routes because
+  both profiles default to the same service CIDR.
+
+A detail worth stating outright, because it looks like a values change and is not: the
+tyk-charts service templates render no `nodePort` field, so a fixed NodePort cannot be
+set through Helm values at all. It needs a separate Service alongside the chart's own.
 
 ## 3. The second cluster
 
@@ -114,6 +124,13 @@ same secret, same Helm values. The post should say so rather than repeating the 
 Only needed because `tyk-k8s-demo` exposed Tyk over ingress. With port-forwarding it is
 dead weight, and it actively breaks the staging demo (item 7). Remove it from the main
 flow.
+
+If the post wants to keep an answer for "how do I put my own load balancer in front?",
+published NodePorts are the better one: `minikube start --ports=8080:30080` maps a host
+port onto a fixed NodePort with no tunnel process, and the two profiles are told apart
+by their host-side mapping rather than by a port offset. The `--ports` flag is
+docker/podman only and applies only at profile creation, which is worth saying in the
+same breath.
 
 ## 5. ArgoCD install
 
@@ -147,9 +164,12 @@ Also worth a sentence: the staging overlay
 (`apps/httpbin/overlays/staging/api_auth.yaml`) sets `enable_ip_whitelisting: true` with
 `allowed_ips: [127.0.0.1]`. `kubectl port-forward` satisfies this — the connection
 reaches the Gateway from inside its own network namespace, so the source address really
-is `127.0.0.1`. Ingress or `minikube tunnel` does **not**: the Gateway sees the ingress
-controller's pod IP and returns 403. This is a concrete reason the post should prefer
-port-forward over the old ingress approach.
+is `127.0.0.1`. Nothing else does: ingress, `minikube tunnel`, a published NodePort or
+a load balancer all present a different source IP and get a 403. This is a concrete
+reason the post should prefer port-forward for the walkthrough, and must tell readers
+to widen `allowed_ips` the moment they move to anything else. `xffDepth: 1` is set in
+the tyk-install values, so a load balancer that sends `X-Forwarded-For` will have the
+real client IP evaluated.
 
 ## 8. Dashboard, Portal and credentials
 
