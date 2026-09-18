@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: httpbin-oas-config
+  namespace: httpbin
+  labels:
+    app: httpbin
+data:
+  httpbin-oas.json: |-
+    {
+      "openapi": "3.0.3",
+      "info": {
+        "title": "httpbin",
+        "version": "1.0.0"
+      },
+      "paths": {
+        "/get": {
+          "get": {
+            "operationId": "httpbinGet",
+            "parameters": [
+              {
+                "in": "header",
+                "name": "X-Client-Id",
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            ],
+            "responses": {
+              "200": {
+                "description": "Success"
+              }
+            }
+          }
+        }
+      },
+      "components": {
+        "securitySchemes": {
+          "authToken": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+          }
+        }
+      },
+      "security": [
+        {
+          "authToken": []
+        }
+      ],
+      "x-tyk-api-gateway": {
+        "info": {
+          "name": "httpbin-api",
+          "state": {
+            "active": true
+          }
+        },
+        "upstream": {
+          "url": "http://httpbin.httpbin.svc"
+        },
+        "server": {
+          "listenPath": {
+            "value": "/httpbin",
+            "strip": true
+          },
+          "authentication": {
+            "enabled": true,
+            "securitySchemes": {
+              "authToken": {
+                "enabled": true
+              }
+            }
+          }
+        },
+        "middleware": {
+          "operations": {
+            "httpbinGet": {
+              "validateRequest": {
+                "enabled": true,
+                "errorResponseCode": 400
+              }
+            }
+          }
+        }
+      }
+    }
+---
+apiVersion: tyk.tyk.io/v1alpha1
+kind: TykOasApiDefinition
+metadata:
+  name: httpbin-api
+  namespace: httpbin
+  labels:
+    app: httpbin
+spec:
+  tykOAS:
+    configmapRef:
+      name: httpbin-oas-config
+      namespace: httpbin
+      keyName: httpbin-oas.json

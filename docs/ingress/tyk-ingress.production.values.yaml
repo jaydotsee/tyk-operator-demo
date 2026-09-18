@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# Tyk ingress for the production cluster
+# ---------------------------------------------------------------------------
+# Third and last values layer. Apply on top of the tyk-install values and the
+# shared Minikube overlay:
+#
+#   helm install tyk tyk-helm/tyk-stack --namespace tyk \
+#     --values values.yaml \
+#     --values ../../../tyk-operator-demo/docs/tyk-minikube.values.yaml \
+#     --values ../../../tyk-operator-demo/docs/ingress/tyk-ingress.production.values.yaml
+#
+# These are the chart's own ingress blocks -- tyk-install ships them already,
+# switched off, with commented cloud examples. Nothing here is a workaround;
+# it is the documented "NGINX Ingress" path from the tyk-install README with
+# the hostnames filled in.
+#
+# The shared overlay already sets both services to ClusterIP, which is what the
+# tyk-install README asks for before enabling ingress.
+#
+# THREE PLACES HAVE TO AGREE ON THE HOSTNAMES, not just the Ingress rules:
+#   1. ingress.hosts[].host       -- what nginx matches the Host header against
+#   2. dashboard.hostName         -- the Dashboard's own hostname
+#   3. hostConfig.overrideHostname-- the Gateway URL the Dashboard advertises
+# Change a name here and you must change it in /etc/hosts and in your load
+# balancer's routing rules too.
+# ---------------------------------------------------------------------------
+
+tyk-gateway:
+  gateway:
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        # API traffic is not a web form: do not let nginx's 1m default body
+        # limit truncate requests passing through the Gateway.
+        nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      hosts:
+        - host: gw.prod.test
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []
+
+tyk-dashboard:
+  dashboard:
+    # TYK_DB_HOSTCONFIG_HOSTNAME. tyk-install ships "tyk-dashboard.local" and
+    # sets hostConfig.enableHostNames: true, so the Dashboard does hostname-based
+    # routing. It has to be the name you actually reach the Dashboard on --
+    # i.e. the ingress host below -- or requests arrive under a hostname it was
+    # not configured for.
+    hostName: dash.prod.test
+
+    hostConfig:
+      # TYK_DB_HOSTCONFIG_GATEWAYHOSTNAME. This is the Gateway URL the Dashboard
+      # shows you in the UI for each API. tyk-install ships "tyk-gw.local", which
+      # resolves to nothing here; point it at the Gateway's ingress host so the
+      # URLs the Dashboard prints are URLs you can actually curl.
+      # enableHostNames and disableOrgSlugPrefix are inherited from the
+      # tyk-install layer -- Helm merges maps, so they are not lost.
+      overrideHostname: gw.prod.test
+
+    ingress:
+      enabled: true
+      className: nginx
+      annotations:
+        nginx.ingress.kubernetes.io/proxy-body-size: "32m"
+      hosts:
+        - host: dash.prod.test
+          paths:
+            - path: /
+              pathType: Prefix
+      tls: []

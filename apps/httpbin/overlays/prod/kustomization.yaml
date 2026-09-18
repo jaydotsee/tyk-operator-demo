@@ -2,15 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
 - ../../base
+- httpbin-oas.yaml
 replicas:
 - name: httpbin
   count: 2
-patches:
-- path: api_auth.yaml
-  target:
-    kind: ApiDefinition
-    labelSelector: app=httpbin
-- path: api_config.yaml
-  target:
-    kind: ApiDefinition
-    labelSelector: app=httpbin

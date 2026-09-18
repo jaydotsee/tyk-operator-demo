@@ -8,8 +8,7 @@ spec:
     server: https://kubernetes.default.svc
   source:
     path: apps/httpbin/overlays/staging
-    repoURL: https://github.com/TykTechnologies/tyk-operator-demo
-  sources: []
+    repoURL: https://github.com/jaydotsee/tyk-operator-demo
   project: default
   syncPolicy:
     automated:

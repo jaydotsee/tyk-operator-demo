@@ -7,8 +7,9 @@ spec:
   access_rights_array:
     - name: httpbin-api
       namespace: httpbin-staging
+      kind: TykOasApiDefinition
       versions:
-        - Default
+        - ""
   active: true
   name: Trial policy (Staging)
   state: active

@@ -6,7 +6,7 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: https://github.com/TykTechnologies/tyk-operator-demo/
+    repoURL: https://github.com/jaydotsee/tyk-operator-demo/
     path: argocd/prod
     targetRevision: main
   destination:

@@ -1,3 +1,6 @@
 .idea
 .idea/
 
+.DS_Store
+docs/blog-update.md
+

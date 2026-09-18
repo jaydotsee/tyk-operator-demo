@@ -7,8 +7,9 @@ spec:
   access_rights_array:
     - name: httpbin-api
       namespace: httpbin
+      kind: TykOasApiDefinition
       versions:
-        - Default
+        - ""
   active: true
   name: Standard policy (Production)
   state: active
